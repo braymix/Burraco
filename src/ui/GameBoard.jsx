@@ -283,8 +283,8 @@ function ActionBar({ isMyTurn, phase, over, selectedCards, selValidation, onCrea
     <div className="actionbar play">
       <div className="sel-info">
         {nSel === 0
-          ? <span className="hint">Seleziona carte per combinare, aggiungere o scartare.</span>
-          : <span className="hint">{nSel} selezionate · {points} pt {meldOk && <b className="ok">✓ {selValidation.type === 'run' ? 'scala' : 'tris'}{selValidation.isBurraco ? ' · burraco' : ''}</b>}</span>}
+          ? <span className="hint">Seleziona le carte, poi <b>Combina</b>, oppure tocca una tua combinazione per <b>aggiungere</b> (anche una matta), o <b>Scarta</b>.</span>
+          : <span className="hint">{nSel} selezionate · {points} pt {meldOk && <b className="ok">✓ {selValidation.type === 'run' ? 'scala' : 'tris'}{selValidation.isBurraco ? ' · burraco' : ''}</b>} · <b>tocca una tua combinazione</b> per aggiungerle</span>}
       </div>
       <div className="btn-row">
         <button className="btn" disabled={!meldOk} onClick={onCreateMeld}>Combina</button>

@@ -57,22 +57,21 @@ function validateRun(cards) {
   // With MAX_WILD = 1, the total wild count (jokers + wild-twos) must be <= 1.
   const jokerWild = jokers.length; // 0 or 1
 
-  // Build candidate interpretations.
+  // Build candidate interpretations. At most one wild total (jokers + wild-two).
   const interpretations = [];
   if (jokerWild === 1) {
-    // No two may be wild. All twos must be natural and of the run's suit.
+    // The joker is the wild; no two may be wild, so all twos must be natural of suit.
     if (twos.every((t) => t.suit === suit)) {
       interpretations.push({ naturals: nonTwo.concat(twos), wilds: 1 });
     }
   } else {
-    // jokerWild === 0. Either 0 wild-twos (all twos natural) or exactly one two wild.
+    // No joker. Option: all twos natural (0 wild)...
     if (twos.every((t) => t.suit === suit)) {
       interpretations.push({ naturals: nonTwo.concat(twos), wilds: 0 });
     }
-    if (twos.length >= 1) {
-      // one two is wild; the remaining twos must be natural of the suit
-      // (only meaningful if the remaining twos are of the suit)
-      const rest = twos.slice(1);
+    // ...or exactly ONE of the twos acts as the wild (try each), the rest natural of suit.
+    for (let i = 0; i < twos.length; i++) {
+      const rest = twos.filter((_, j) => j !== i);
       if (rest.every((t) => t.suit === suit)) {
         interpretations.push({ naturals: nonTwo.concat(rest), wilds: 1 });
       }
