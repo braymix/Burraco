@@ -73,10 +73,31 @@ public/icons/      # icone PWA
 
 ## Deploy
 
-Serve un host Node (il server serve sia la PWA che il WebSocket):
+Il progetto ha due parti: la **PWA statica** (client) e il **server online**
+(Node + Socket.IO, processo sempre attivo con WebSocket). Il gioco *contro il
+bot* è tutto lato client; il gioco *online* richiede il server.
 
+### Opzione consigliata — Solo Render (tutto-in-uno)
+Il server Node serve anche la PWA, quindi basta **un unico servizio**. È incluso
+`render.yaml`: crea un "Web Service" da questo repo (build `npm install && npm run
+build`, start `npm start`). Non impostare `VITE_SERVER_URL` (il client usa la
+stessa origine).
+
+### Solo Netlify — solo gioco contro il Bot
+Netlify **non** può ospitare il server online (niente WebSocket persistenti). Va
+benissimo se vuoi solo la modalità offline: è incluso `netlify.toml` (build
+`npm run build`, publish `dist`).
+
+### Netlify + Render — client su Netlify, server su Render
+1. Deploy del server su Render (come sopra).
+2. Su Netlify imposta la variabile di build `VITE_SERVER_URL` con l'URL del
+   server Render, es. `https://burraco.onrender.com`.
+3. Il client si collegherà al Socket.IO su Render (il server accetta già le
+   connessioni cross-origin).
+
+### Locale
 ```bash
 npm ci
 npm run build
-PORT=8080 npm start
+PORT=8080 npm start   # http://localhost:8080
 ```

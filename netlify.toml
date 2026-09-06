@@ -1,0 +1,19 @@
+# Netlify serve SOLO la PWA statica (client).
+#
+# - Se ti basta il gioco "contro il Bot" (offline): questo file da solo è
+#   sufficiente, non serve nessun altro servizio.
+# - Se vuoi anche il gioco ONLINE: il server (server/index.js) va ospitato
+#   altrove (es. Render) perché Netlify non supporta WebSocket persistenti.
+#   In quel caso imposta la variabile d'ambiente di build su Netlify:
+#       VITE_SERVER_URL = https://il-tuo-server.onrender.com
+#   così il client si collega al server Socket.IO su Render.
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# SPA fallback: ogni route serve index.html (React gestisce la navigazione).
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

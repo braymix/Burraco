@@ -1,0 +1,14 @@
+# Deploy tutto-in-uno su Render: il server Node serve sia la PWA sia il
+# WebSocket del gioco online. È l'opzione consigliata (un solo servizio).
+services:
+  - type: web
+    name: burraco
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+    # NB: sul piano free il servizio va in sospensione dopo inattività e lo stato
+    # in memoria (partite in corso, profili) si azzera al riavvio.

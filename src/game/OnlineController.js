@@ -20,7 +20,14 @@ export class OnlineController {
     };
     this.disposed = false;
 
-    const url = import.meta.env.DEV ? 'http://localhost:3001' : undefined;
+    // Server URL resolution:
+    // - VITE_SERVER_URL (set at build time) wins -> needed when the client is
+    //   hosted separately from the server (e.g. client on Netlify, server on Render).
+    // - otherwise use localhost in dev, or same-origin in production (single-host
+    //   deploy where the Node server also serves the PWA, e.g. Render only).
+    const url =
+      import.meta.env.VITE_SERVER_URL ||
+      (import.meta.env.DEV ? 'http://localhost:3001' : undefined);
     this.socket = io(url, { transports: ['websocket', 'polling'] });
 
     this.socket.on('connect', () => {
