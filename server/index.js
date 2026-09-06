@@ -77,7 +77,14 @@ const io = new Server(httpServer, { cors: { origin: '*' } });
 const rooms = new Map();          // roomId -> room
 const userRoom = new Map();       // userId -> roomId (active match)
 const socketUser = new Map();     // socketId -> userId
-let quickQueue = [];              // [{userId,name,socketId}]
+const quickQueues = { 2: [], 4: [] }; // size -> [{userId,name,socketId}]
+
+let botCounter = 1;
+const BOT_NAMES = ['Bot Bruno', 'Bot Bianca', 'Bot Carla', 'Bot Dario', 'Bot Elsa', 'Bot Furio'];
+function makeBotSeat() {
+  const name = BOT_NAMES[(botCounter - 1) % BOT_NAMES.length];
+  return { userId: 'bot-' + (botCounter++), name, socketId: null, connected: false, auto: true, isBot: true };
+}
 
 function code4() {
   const s = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -86,9 +93,9 @@ function code4() {
   return c;
 }
 
-function makeRoom(type, code) {
+function makeRoom(type, code, size = 2) {
   const id = 'room-' + nanoid(8);
-  const room = { id, code: code || null, type, match: null, seats: [], botTimer: null, started: false };
+  const room = { id, code: code || null, type, size, match: null, seats: [], botTimer: null, started: false };
   rooms.set(id, room);
   return room;
 }
@@ -98,12 +105,24 @@ function seatIndexOfUser(room, userId) {
 }
 
 function startRoomMatch(room) {
-  const players = room.seats.map((s) => ({ id: s.userId, name: s.name, isBot: false }));
+  const players = room.seats.map((s) => ({ id: s.userId, name: s.name, isBot: !!s.isBot }));
   room.match = createMatch({ players });
   room.started = true;
-  for (const seat of room.seats) userRoom.set(seat.userId, room.id);
+  for (const seat of room.seats) if (!seat.isBot) userRoom.set(seat.userId, room.id);
   broadcastRoom(room, 'match:start');
   maybeRunBots(room);
+}
+
+// Notify seated members about the current lobby (who's in, how many seats).
+function broadcastLobby(room) {
+  const info = {
+    roomId: room.id, code: room.code, size: room.size,
+    filled: room.seats.length,
+    seats: room.seats.map((s) => ({ name: s.name, isBot: !!s.isBot })),
+  };
+  room.seats.forEach((seat, idx) => {
+    if (seat.socketId && !seat.isBot) io.to(seat.socketId).emit('room:lobby', { ...info, seat: idx });
+  });
 }
 
 function seatView(room, seatIdx) {
@@ -168,10 +187,11 @@ function finishMatch(room) {
   if (room._finished) return;
   room._finished = true;
   const m = room.match;
-  const winner = m.winner;
+  const winnerTeam = m.winner;
   room.seats.forEach((seat, idx) => {
-    if (!seat.auto) {
-      recordResult(seat.userId, seat.name, idx === winner, m.players[idx].totalScore);
+    if (!seat.isBot) {
+      const team = idx % 2;
+      recordResult(seat.userId, seat.name, team === winnerTeam, m.teamScores[team]);
     }
   });
   broadcastState(room);
@@ -238,52 +258,65 @@ io.on('connection', (socket) => {
     socket.emit('hello:ok', { profile: getProfile(userId, name) });
   });
 
-  socket.on('queue:join', () => {
+  socket.on('queue:join', ({ size } = {}) => {
     const userId = socket.data.userId;
     if (!userId) return;
     if (userRoom.has(userId)) return; // already in a game
-    quickQueue = quickQueue.filter((q) => q.userId !== userId);
-    quickQueue.push({ userId, name: socket.data.name, socketId: socket.id });
-    socket.emit('queue:waiting', { size: quickQueue.length });
+    const sz = size === 4 ? 4 : 2;
+    quickQueues[2] = quickQueues[2].filter((q) => q.userId !== userId);
+    quickQueues[4] = quickQueues[4].filter((q) => q.userId !== userId);
+    quickQueues[sz].push({ userId, name: socket.data.name, socketId: socket.id });
+    socket.emit('queue:waiting', { size: sz, waiting: quickQueues[sz].length });
 
-    if (quickQueue.length >= 2) {
-      const a = quickQueue.shift();
-      const b = quickQueue.shift();
-      const room = makeRoom('quick');
-      room.seats = [
-        { userId: a.userId, name: a.name, socketId: a.socketId, connected: true, auto: false },
-        { userId: b.userId, name: b.name, socketId: b.socketId, connected: true, auto: false },
-      ];
+    if (quickQueues[sz].length >= sz) {
+      const picked = quickQueues[sz].splice(0, sz);
+      const room = makeRoom('quick', null, sz);
+      room.seats = picked.map((q) => ({ userId: q.userId, name: q.name, socketId: q.socketId, connected: true, auto: false }));
       startRoomMatch(room);
     }
   });
 
   socket.on('queue:leave', () => {
     const userId = socket.data.userId;
-    quickQueue = quickQueue.filter((q) => q.userId !== userId);
+    quickQueues[2] = quickQueues[2].filter((q) => q.userId !== userId);
+    quickQueues[4] = quickQueues[4].filter((q) => q.userId !== userId);
     socket.emit('queue:left', {});
   });
 
-  socket.on('room:create', () => {
+  socket.on('room:create', ({ size } = {}) => {
     const userId = socket.data.userId;
     if (!userId) return;
     if (userRoom.has(userId)) return;
+    const sz = size === 4 ? 4 : 2;
     let code = code4();
     let guard = 0;
     while ([...rooms.values()].some((r) => r.code === code) && guard++ < 50) code = code4();
-    const room = makeRoom('private', code);
+    const room = makeRoom('private', code, sz);
     room.seats = [{ userId, name: socket.data.name, socketId: socket.id, connected: true, auto: false }];
     userRoom.set(userId, room.id);
-    socket.emit('room:created', { roomId: room.id, code: room.code, seat: 0 });
+    socket.emit('room:created', { roomId: room.id, code: room.code, seat: 0, size: sz, filled: 1 });
   });
 
   socket.on('room:join', ({ code }) => {
     const userId = socket.data.userId;
     if (!userId) return;
     if (userRoom.has(userId)) return;
-    const room = [...rooms.values()].find((r) => r.code === code && r.seats.length < 2 && !r.started);
+    const room = [...rooms.values()].find((r) => r.code === code && r.seats.length < r.size && !r.started);
     if (!room) { socket.emit('room:error', { error: 'Codice non valido o stanza piena.' }); return; }
     room.seats.push({ userId, name: socket.data.name, socketId: socket.id, connected: true, auto: false });
+    userRoom.set(userId, room.id);
+    if (room.seats.length >= room.size) startRoomMatch(room);
+    else broadcastLobby(room);
+  });
+
+  // Private-room host fills remaining seats with bots and starts now.
+  socket.on('room:startbots', () => {
+    const userId = socket.data.userId;
+    const roomId = userRoom.get(userId);
+    if (!roomId || !rooms.has(roomId)) return;
+    const room = rooms.get(roomId);
+    if (room.started || room.seats[0]?.userId !== userId) return;
+    while (room.seats.length < room.size) room.seats.push(makeBotSeat());
     startRoomMatch(room);
   });
 
@@ -293,7 +326,7 @@ io.on('connection', (socket) => {
     if (roomId && rooms.has(roomId)) {
       const room = rooms.get(roomId);
       if (!room.started) {
-        userRoom.delete(userId);
+        for (const s of room.seats) if (!s.isBot) userRoom.delete(s.userId);
         rooms.delete(roomId);
         socket.emit('room:cancelled', {});
       }
@@ -323,7 +356,8 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     const userId = socket.data.userId;
     socketUser.delete(socket.id);
-    quickQueue = quickQueue.filter((q) => q.socketId !== socket.id);
+    quickQueues[2] = quickQueues[2].filter((q) => q.socketId !== socket.id);
+    quickQueues[4] = quickQueues[4].filter((q) => q.socketId !== socket.id);
     if (!userId) return;
     const roomId = userRoom.get(userId);
     if (roomId && rooms.has(roomId)) {

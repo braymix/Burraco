@@ -15,6 +15,10 @@ export class OnlineController {
       seats: [],
       view: null,
       roomCode: null,
+      roomSize: 2,
+      lobbyFilled: 1,
+      lobbySeats: [],
+      isHost: false,
       matchmaking: 'idle', // idle | queue | waiting-room | in-game | finished
       error: null,
     };
@@ -37,11 +41,13 @@ export class OnlineController {
     this.socket.on('disconnect', () => this._patch({ connection: 'disconnected' }));
 
     this.socket.on('hello:ok', () => {});
-    this.socket.on('queue:waiting', () => this._patch({ matchmaking: 'queue' }));
+    this.socket.on('queue:waiting', ({ size }) => this._patch({ matchmaking: 'queue', roomSize: size }));
     this.socket.on('queue:left', () => this._patch({ matchmaking: 'idle' }));
 
-    this.socket.on('room:created', ({ code, seat }) =>
-      this._patch({ matchmaking: 'waiting-room', roomCode: code, seat }));
+    this.socket.on('room:created', ({ code, seat, size, filled }) =>
+      this._patch({ matchmaking: 'waiting-room', roomCode: code, seat, roomSize: size, lobbyFilled: filled, isHost: seat === 0 }));
+    this.socket.on('room:lobby', ({ code, size, filled, seats, seat }) =>
+      this._patch({ matchmaking: 'waiting-room', roomCode: code, roomSize: size, lobbyFilled: filled, lobbySeats: seats, seat, isHost: seat === 0 }));
     this.socket.on('room:cancelled', () =>
       this._patch({ matchmaking: 'idle', roomCode: null }));
     this.socket.on('room:error', ({ error }) => this._patch({ error }));
@@ -75,10 +81,11 @@ export class OnlineController {
   getState() { return this.state; }
 
   // ---- matchmaking ----
-  quickMatch() { this.socket.emit('queue:join'); this._patch({ matchmaking: 'queue' }); }
+  quickMatch(size = 2) { this.socket.emit('queue:join', { size }); this._patch({ matchmaking: 'queue', roomSize: size }); }
   leaveQueue() { this.socket.emit('queue:leave'); }
-  createRoom() { this.socket.emit('room:create'); }
+  createRoom(size = 2) { this.socket.emit('room:create', { size }); }
   joinRoom(code) { this.socket.emit('room:join', { code: (code || '').toUpperCase().trim() }); }
+  startWithBots() { this.socket.emit('room:startbots'); }
   cancelRoom() { this.socket.emit('room:cancel'); }
 
   // ---- game actions ----

@@ -4,7 +4,7 @@
 
 import { isJoker, isTwo, cardValue } from './cards.js';
 import { validateMeld, validateAddition } from './rules.js';
-import { drawCard, createMeld, addToMeld, discardCard, rawHand } from './engine.js';
+import { drawCard, createMeld, addToMeld, discardCard, rawHand, teamOf } from './engine.js';
 
 // Try to find candidate new melds from a pool of cards (array of card objects).
 // Returns array of card-id groups that validate as melds. Mutates nothing.
@@ -149,6 +149,7 @@ function decideDraw(h, p) {
   if (h.discard.length === 0) return 'stock';
   const top = h.discard[0];
   const hand = h.hands[p];
+  const team = teamOf(p);
   const pileSize = h.discard.length;
   if (pileSize > 15) return 'stock';
 
@@ -159,9 +160,11 @@ function decideDraw(h, p) {
   const withPile = new Set(findNewMelds(hand.concat(h.discard)).flat());
   const gain = withPile.size - base.size;
 
-  // Take the pile only when the top card actively creates a meld now, or when a
-  // small pile yields a big melding gain.
+  // Also useful if the top card lays off onto our team's melds.
+  const topLayoff = h.melds[team].some((m) => validateAddition(m.cards, [top]));
+
   if (topEnablesMeld && gain >= 2 && pileSize <= 12) return 'discard';
+  if (topLayoff && pileSize <= 8) return 'discard';
   if (gain >= pileSize + 2 && pileSize <= 6) return 'discard';
   return 'stock';
 }
@@ -197,8 +200,8 @@ function keepScore(hand, card, h, p) {
 }
 
 function feedsOpponent(h, p, card) {
-  const opp = 1 - p;
-  return h.melds[opp].some((m) => validateAddition(m.cards, [card]));
+  const oppTeam = 1 - teamOf(p);
+  return h.melds[oppTeam].some((m) => validateAddition(m.cards, [card]));
 }
 
 // Run the bot's entire turn. Returns a list of action summaries.
@@ -206,6 +209,7 @@ export function runBotTurn(match, p) {
   const actions = [];
   const h = rawHand(match);
   if (!h || h.over || h.turn !== p) return actions;
+  const team = teamOf(p);
 
   // 1) Draw.
   const src = decideDraw(h, p);
@@ -219,10 +223,10 @@ export function runBotTurn(match, p) {
   const safeToApply = (count) => {
     const len = match.hand.hands[p].length;
     const newLen = len - count;
-    if (newLen === 1) return false;                    // dead-end: can't discard later
+    if (newLen === 1) return false;                       // dead-end: can't discard later
     if (newLen === 0) {
-      if (!match.hand.pozzettoTaken[p]) return true;   // emptying refills from pozzetto
-      return match.hand.hasBurraco[p] || (count >= 7); // legal close needs a burraco
+      if (!match.hand.pozzettoTaken[team]) return true;   // emptying refills from pozzetto
+      return match.hand.hasBurraco[team] || (count >= 7); // legal close needs a burraco
     }
     return true;
   };
@@ -233,7 +237,7 @@ export function runBotTurn(match, p) {
     progressed = false;
 
     // Layoffs first (cheap points and helps reach burraco).
-    const { layoffs } = findLayoffs(match.hand.hands[p], match.hand.melds[p]);
+    const { layoffs } = findLayoffs(match.hand.hands[p], match.hand.melds[team]);
     for (const lo of layoffs) {
       let ids = lo.ids;
       // Trim so we don't get stuck on exactly 1 card.

@@ -18,9 +18,9 @@ export default function App() {
     return () => { if (unsubRef.current) unsubRef.current(); };
   }, [controller]);
 
-  const startLocal = () => {
+  const startLocal = (numPlayers = 2) => {
     disposeController();
-    setController(new LocalController({ playerName: profile.name, botName: 'Bot Bruno' }));
+    setController(new LocalController({ playerName: profile.name, numPlayers }));
   };
   const startOnline = () => {
     disposeController();
@@ -98,30 +98,74 @@ function Menu({ profile, onName, onLocal, onOnline, onRules }) {
       </div>
 
       <div className="menu-actions">
-        <button className="btn btn-big btn-primary" onClick={onLocal}>🤖 Gioca contro il Bot</button>
+        <div className="mode-group">
+          <div className="mode-label">🤖 Contro il Bot</div>
+          <div className="mode-buttons">
+            <button className="btn btn-big btn-primary" onClick={() => onLocal(2)}>1 vs 1</button>
+            <button className="btn btn-big btn-primary" onClick={() => onLocal(4)}>2 vs 2</button>
+          </div>
+        </div>
         <button className="btn btn-big" onClick={onOnline}>🌐 Gioca Online</button>
         <button className="btn btn-big btn-ghost" onClick={onRules}>📖 Come si gioca</button>
       </div>
 
-      <footer className="menu-footer">
-        <span>PWA · installabile · funziona offline contro il bot</span>
-      </footer>
+      <MenuFooter />
     </div>
+  );
+}
+
+const FOOTER_PHRASES = [
+  'Occhio alla Pinella! 🃏',
+  'Un burraco pulito vale 200 punti ✨',
+  'Prendi il pozzetto al momento giusto 🎁',
+  'Il Jolly è tuo amico… quasi sempre 😉',
+  'Per chiudere serve almeno un burraco 🔒',
+  'Le scale dello stesso seme fanno la differenza',
+  'Non regalare carte utili agli avversari 🤫',
+  'Gioca con un amico: crea una stanza privata 👫',
+  'In 2 vs 2 il compagno conta più di tutto 🤝',
+  'A volte prendere gli scarti è la mossa vincente',
+  'Tieni le matte per i colpi grossi 💥',
+  'Buona fortuna e buon divertimento! 🍀',
+];
+
+function MenuFooter() {
+  const [idx, setIdx] = useState(() => Math.floor(Math.random() * FOOTER_PHRASES.length));
+  const [show, setShow] = useState(true);
+  useEffect(() => {
+    const t = setInterval(() => {
+      setShow(false);
+      setTimeout(() => {
+        setIdx((i) => (i + 1) % FOOTER_PHRASES.length);
+        setShow(true);
+      }, 400);
+    }, 4200);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <footer className="menu-footer">
+      <span className="footer-fixed">App creata per poter giocare a Burraco gratuitamente online e senza pubblicità</span>
+      <span className={`footer-rotate ${show ? 'in' : 'out'}`}>{FOOTER_PHRASES[idx]}</span>
+    </footer>
   );
 }
 
 function OnlineLobby({ controller, state, onBack }) {
   const [tab, setTab] = useState('quick'); // quick | create | join
   const [code, setCode] = useState('');
+  const [size, setSize] = useState(2);
   const mm = state?.matchmaking || 'idle';
   const conn = state?.connection;
 
-  useEffect(() => {
-    // reset to idle view when we come back
-  }, []);
-
   const waiting = mm === 'queue';
   const room = mm === 'waiting-room';
+
+  const SizePicker = () => (
+    <div className="size-picker">
+      <button className={`size-opt ${size === 2 ? 'on' : ''}`} onClick={() => setSize(2)}>1 vs 1</button>
+      <button className={`size-opt ${size === 4 ? 'on' : ''}`} onClick={() => setSize(4)}>2 vs 2</button>
+    </div>
+  );
 
   return (
     <div className="lobby">
@@ -136,46 +180,59 @@ function OnlineLobby({ controller, state, onBack }) {
       {waiting ? (
         <div className="lobby-panel center">
           <div className="spinner" />
-          <h3>In cerca di un avversario…</h3>
-          <p className="sub">Appena un altro giocatore entra in coda, la partita inizia.</p>
+          <h3>In cerca di giocatori…</h3>
+          <p className="sub">Modalità {state.roomSize === 4 ? '2 vs 2' : '1 vs 1'}. La partita inizia appena la coda è completa.</p>
           <button className="btn btn-ghost" onClick={() => { controller.leaveQueue(); }}>Annulla</button>
         </div>
       ) : room ? (
         <div className="lobby-panel center">
-          <h3>Stanza privata creata</h3>
-          <p className="sub">Condividi questo codice con un amico:</p>
+          <h3>Stanza privata</h3>
+          <p className="sub">Condividi il codice con {state.roomSize === 4 ? 'i tuoi amici' : 'un amico'}:</p>
           <div className="room-code">{state.roomCode}</div>
+          <p className="sub">{state.lobbyFilled || 1} / {state.roomSize} giocatori nella stanza</p>
+          {(state.lobbySeats && state.lobbySeats.length > 0) && (
+            <div className="lobby-seats">
+              {state.lobbySeats.map((s, i) => <span key={i} className="seat-chip">{s.name}</span>)}
+            </div>
+          )}
           <div className="spinner small" />
-          <p className="sub">In attesa che l'amico entri…</p>
+          <p className="sub">In attesa degli altri giocatori…</p>
+          {state.isHost && (
+            <button className="btn btn-big btn-primary" onClick={() => controller.startWithBots()}>
+              Inizia ora {state.lobbyFilled < state.roomSize ? '(riempi con i bot)' : ''}
+            </button>
+          )}
           <button className="btn btn-ghost" onClick={() => controller.cancelRoom()}>Annulla stanza</button>
         </div>
       ) : (
         <div className="lobby-panel">
           <div className="tabs">
-            <button className={`tab ${tab === 'quick' ? 'on' : ''}`} onClick={() => setTab('quick')}>Partita rapida</button>
+            <button className={`tab ${tab === 'quick' ? 'on' : ''}`} onClick={() => setTab('quick')}>Rapida</button>
             <button className={`tab ${tab === 'create' ? 'on' : ''}`} onClick={() => setTab('create')}>Crea stanza</button>
-            <button className={`tab ${tab === 'join' ? 'on' : ''}`} onClick={() => setTab('join')}>Entra con codice</button>
+            <button className={`tab ${tab === 'join' ? 'on' : ''}`} onClick={() => setTab('join')}>Codice</button>
           </div>
 
           {tab === 'quick' && (
             <div className="tab-body center">
-              <p>Vieni abbinato automaticamente a un altro giocatore online.</p>
-              <button className="btn btn-big btn-primary" disabled={conn !== 'connected'} onClick={() => controller.quickMatch()}>
-                Cerca avversario
+              <p>Vieni abbinato automaticamente ad altri giocatori online.</p>
+              <SizePicker />
+              <button className="btn btn-big btn-primary" disabled={conn !== 'connected'} onClick={() => controller.quickMatch(size)}>
+                Cerca giocatori
               </button>
             </div>
           )}
           {tab === 'create' && (
             <div className="tab-body center">
-              <p>Crea una stanza privata e invita un amico con il codice.</p>
-              <button className="btn btn-big btn-primary" disabled={conn !== 'connected'} onClick={() => controller.createRoom()}>
+              <p>Crea una stanza privata e invita gli amici con il codice.</p>
+              <SizePicker />
+              <button className="btn btn-big btn-primary" disabled={conn !== 'connected'} onClick={() => controller.createRoom(size)}>
                 Crea stanza
               </button>
             </div>
           )}
           {tab === 'join' && (
             <form className="tab-body center" onSubmit={(e) => { e.preventDefault(); controller.joinRoom(code); }}>
-              <p>Inserisci il codice ricevuto dall'amico.</p>
+              <p>Inserisci il codice ricevuto dagli amici.</p>
               <input
                 className="code-input"
                 value={code}

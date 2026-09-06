@@ -7,21 +7,24 @@ import {
 } from '../engine/engine.js';
 import { runBotTurn } from '../engine/bot.js';
 
+const BOT_NAMES = ['Bot Bruno', 'Bot Bianca', 'Bot Carla', 'Bot Dario', 'Bot Elsa', 'Bot Furio'];
+
 export class LocalController {
-  constructor({ playerName = 'Tu', botName = 'Bot', targetScore } = {}) {
+  constructor({ playerName = 'Tu', numPlayers = 2, targetScore } = {}) {
     this.mode = 'local';
     this.you = 0;
+    this.numPlayers = numPlayers === 4 ? 4 : 2;
     this.listeners = new Set();
     this.disposed = false;
     this.botThinking = false;
-    this.match = createMatch({
-      players: [
-        { id: 'you', name: playerName, isBot: false },
-        { id: 'bot', name: botName, isBot: true },
-      ],
-      targetScore,
-    });
-    // If the bot starts, let it play.
+
+    // Seat 0 = you; the rest are bots. In 4-player, seat 2 is your partner.
+    const players = [{ id: 'you', name: playerName, isBot: false }];
+    for (let i = 1; i < this.numPlayers; i++) {
+      players.push({ id: 'bot' + i, name: BOT_NAMES[(i - 1) % BOT_NAMES.length], isBot: true });
+    }
+    this.match = createMatch({ players, targetScore });
+    // If a bot starts, let it play.
     setTimeout(() => this._maybeBot(), 500);
   }
 
@@ -41,10 +44,7 @@ export class LocalController {
       mode: 'local',
       connection: 'local',
       seat: this.you,
-      seats: [
-        { name: this.match.players[0].name, connected: true, auto: false },
-        { name: this.match.players[1].name, connected: true, auto: true },
-      ],
+      seats: this.match.players.map((p) => ({ name: p.name, connected: true, auto: p.isBot })),
       view: viewFor(this.match, this.you),
       botThinking: this.botThinking,
     };
@@ -68,18 +68,19 @@ export class LocalController {
   _maybeBot() {
     const m = this.match;
     if (this.disposed || m.finished || m.hand.over) return;
-    if (m.hand.turn !== 1) return; // not the bot's turn
+    const turn = m.hand.turn;
+    if (turn === this.you) return; // it's the human's turn
     this.botThinking = true;
     this._emit();
     // Small delay so the human can follow the bot's moves.
     setTimeout(() => {
       if (this.disposed) return;
       const h = rawHand(m);
-      if (!h || h.over || h.turn !== 1) { this.botThinking = false; this._emit(); return; }
-      runBotTurn(m, 1);
+      if (!h || h.over || h.turn === this.you) { this.botThinking = false; this._emit(); return; }
+      runBotTurn(m, h.turn);
       this.botThinking = false;
       this._afterAction();
-    }, 900);
+    }, 850);
   }
 
   // ---- actions (human) ----

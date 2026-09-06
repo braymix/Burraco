@@ -6,7 +6,7 @@ export function RulesModal({ onClose }) {
       <div className="overlay-card rules" onClick={(e) => e.stopPropagation()}>
         <h2>Come si gioca a Burraco</h2>
         <div className="rules-body">
-          <p>Versione a <b>2 giocatori</b> con 2 mazzi da 54 carte (108 carte, 4 jolly).</p>
+          <p>Si gioca in <b>2</b> (1 vs 1) o in <b>4</b> (2 vs 2, in coppia) con 2 mazzi da 54 carte (108 carte, 4 jolly). In 2 vs 2 i compagni condividono le combinazioni.</p>
 
           <h3>Obiettivo</h3>
           <p>Formare combinazioni e realizzare un <b>burraco</b> (combinazione di 7+ carte) per poter chiudere. Vince chi raggiunge per primo <b>{'2005'}</b> punti.</p>

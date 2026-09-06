@@ -1,6 +1,7 @@
 // Burraco game engine - authoritative game state and legal moves.
-// Two-player variant: each player is their own team, each with their own pozzetto.
-// Pure ESM, no side effects on I/O; the caller (client or server) drives it.
+// Supports 2 players (1v1) and 4 players (2v2, teams = seats {0,2} and {1,3}).
+// Melds, burracos and pozzetti belong to the TEAM. There are always 2 teams and
+// 2 pozzetti (one per team). Pure ESM, no I/O side effects.
 
 import { buildDeck, shuffle, cardValue, isJoker } from './cards.js';
 import { validateMeld, validateAddition } from './rules.js';
@@ -9,23 +10,29 @@ let meldSeq = 1;
 function newMeldId() { return `m${meldSeq++}`; }
 
 export const TARGET_SCORE = 2005;
+export const NUM_TEAMS = 2;
+
+export function teamOf(playerIndex) { return playerIndex % NUM_TEAMS; }
 
 // ---- Setup ----------------------------------------------------------------
 
 export function createMatch({ players, rng = Math.random, targetScore = TARGET_SCORE }) {
-  // players: [{ id, name, isBot }]
+  // players: [{ id, name, isBot }] - length 2 or 4.
+  const numPlayers = players.length;
   const match = {
     id: 'match-' + Math.floor(rng() * 1e9).toString(36),
+    numPlayers,
     targetScore,
     players: players.map((p, i) => ({
       id: p.id,
       name: p.name,
       isBot: !!p.isBot,
       index: i,
-      totalScore: 0,
+      team: teamOf(i),
     })),
+    teamScores: [0, 0],
     handNumber: 0,
-    hand: null,       // current hand state
+    hand: null,
     finished: false,
     winner: null,
     log: [],
@@ -36,48 +43,44 @@ export function createMatch({ players, rng = Math.random, targetScore = TARGET_S
 
 export function startHand(match, rng = Math.random) {
   match.handNumber += 1;
+  const n = match.numPlayers;
   const deck = shuffle(buildDeck(), rng);
-  const hands = [[], []];
-  // Deal 11 cards each.
+  const hands = Array.from({ length: n }, () => []);
   for (let i = 0; i < 11; i++) {
-    hands[0].push(deck.pop());
-    hands[1].push(deck.pop());
+    for (let p = 0; p < n; p++) hands[p].push(deck.pop());
   }
-  // Two pozzetti of 11 cards each.
+  // Two pozzetti of 11 cards each (one per team).
   const pozzetti = [[], []];
-  for (let i = 0; i < 11; i++) { pozzetti[0].push(deck.pop()); }
-  for (let i = 0; i < 11; i++) { pozzetti[1].push(deck.pop()); }
-  // One card starts the discard pile.
+  for (let t = 0; t < NUM_TEAMS; t++) {
+    for (let i = 0; i < 11; i++) pozzetti[t].push(deck.pop());
+  }
   const discard = [deck.pop()];
-  const stock = deck; // remaining
+  const stock = deck;
 
-  // Dealer alternates; non-dealer starts.
-  const starter = match.handNumber % 2 === 1 ? 0 : 1;
+  const starter = (match.handNumber - 1) % n;
 
   match.hand = {
     hands,
     stock,
     discard,
     pozzetti,
-    pozzettoTaken: [false, false],
-    melds: [[], []],           // melds per player/team
-    hasBurraco: [false, false],
+    pozzettoTaken: [false, false],   // per team
+    melds: [[], []],                 // per team
+    hasBurraco: [false, false],      // per team
     turn: starter,
-    phase: 'draw',             // 'draw' | 'play'
+    phase: 'draw',
     tookDiscardThisTurn: false,
     over: false,
-    closedBy: null,
+    closedBy: null,                  // team index or null
     lastAction: null,
     turnCount: 0,
   };
-  sortHand(match.hand.hands[0]);
-  sortHand(match.hand.hands[1]);
+  for (let p = 0; p < n; p++) sortHand(match.hand.hands[p]);
   match.log.push({ t: 'hand-start', hand: match.handNumber, starter });
   return match;
 }
 
 export function sortHand(hand) {
-  // Group jokers last, then by suit then rank; twos kept in suit order.
   hand.sort((a, b) => {
     if (a.isJoker !== b.isJoker) return a.isJoker ? 1 : -1;
     if (a.isJoker && b.isJoker) return 0;
@@ -109,7 +112,6 @@ export function currentPlayer(match) {
   return match.hand ? match.hand.turn : -1;
 }
 
-// Public: is it legal for player p to act now?
 function ensureTurn(h, p) {
   if (h.over) return 'La mano è terminata.';
   if (h.turn !== p) return 'Non è il tuo turno.';
@@ -118,7 +120,6 @@ function ensureTurn(h, p) {
 
 // ---- Actions --------------------------------------------------------------
 
-// draw from 'stock' or take the whole 'discard' pile.
 export function drawCard(match, p, source) {
   const h = match.hand;
   const err = ensureTurn(h, p);
@@ -126,10 +127,7 @@ export function drawCard(match, p, source) {
   if (h.phase !== 'draw') return { ok: false, error: 'Hai già pescato.' };
 
   if (source === 'stock') {
-    if (h.stock.length === 0) {
-      // Stock empty -> the hand ends (nobody can draw).
-      return endHandEmptyStock(match);
-    }
+    if (h.stock.length === 0) return endHandEmptyStock(match);
     const card = h.stock.pop();
     h.hands[p].push(card);
     sortHand(h.hands[p]);
@@ -154,39 +152,39 @@ export function drawCard(match, p, source) {
   return { ok: false, error: 'Sorgente pesca non valida.' };
 }
 
-// Create a new meld from cards in hand.
 export function createMeld(match, p, cardIds) {
   const h = match.hand;
   const err = ensureTurn(h, p);
   if (err) return { ok: false, error: err };
   if (h.phase !== 'play') return { ok: false, error: 'Devi prima pescare.' };
+  const t = teamOf(p);
   const cards = findCards(h.hands[p], cardIds);
   if (!cards) return { ok: false, error: 'Carte non valide.' };
   const v = validateMeld(cards);
   if (!v.valid) return { ok: false, error: 'Combinazione non valida.' };
 
   const willEmpty = h.hands[p].length - cardIds.length === 0;
-  if (willEmpty && h.pozzettoTaken[p] && !willHaveBurracoAfterNewMeld(h, p, v)) {
+  if (willEmpty && h.pozzettoTaken[t] && !willHaveBurracoAfterNewMeld(h, t, v)) {
     return { ok: false, error: 'Devi tenere una carta per lo scarto (serve un burraco per chiudere).' };
   }
 
   removeCards(h.hands[p], cardIds);
-  const meld = { id: newMeldId(), cards: cards.slice(), type: v.type };
-  h.melds[p].push(meld);
-  recomputeBurraco(h, p);
-  match.log.push({ t: 'meld', player: p, meld: meld.id, type: v.type, len: cards.length });
+  const meld = { id: newMeldId(), cards: cards.slice(), type: v.type, owner: p };
+  h.melds[t].push(meld);
+  recomputeBurraco(h, t);
+  match.log.push({ t: 'meld', player: p, team: t, meld: meld.id, type: v.type, len: cards.length });
   h.lastAction = { type: 'meld', player: p };
   afterHandChange(match, p);
   return { ok: true, meldId: meld.id };
 }
 
-// Add cards from hand to an existing meld (own team's meld).
 export function addToMeld(match, p, meldId, cardIds) {
   const h = match.hand;
   const err = ensureTurn(h, p);
   if (err) return { ok: false, error: err };
   if (h.phase !== 'play') return { ok: false, error: 'Devi prima pescare.' };
-  const meld = h.melds[p].find((m) => m.id === meldId);
+  const t = teamOf(p);
+  const meld = h.melds[t].find((m) => m.id === meldId);
   if (!meld) return { ok: false, error: 'Combinazione non trovata.' };
   const cards = findCards(h.hands[p], cardIds);
   if (!cards) return { ok: false, error: 'Carte non valide.' };
@@ -194,8 +192,8 @@ export function addToMeld(match, p, meldId, cardIds) {
   if (!v) return { ok: false, error: 'Non puoi aggiungere queste carte.' };
 
   const willEmpty = h.hands[p].length - cardIds.length === 0;
-  if (willEmpty && h.pozzettoTaken[p]) {
-    const otherBurraco = h.melds[p].some((m) => m !== meld && m.cards.length >= 7);
+  if (willEmpty && h.pozzettoTaken[t]) {
+    const otherBurraco = h.melds[t].some((mm) => mm !== meld && mm.cards.length >= 7);
     const thisBurraco = meld.cards.length + cards.length >= 7;
     if (!otherBurraco && !thisBurraco) {
       return { ok: false, error: 'Devi tenere una carta per lo scarto (serve un burraco per chiudere).' };
@@ -205,88 +203,75 @@ export function addToMeld(match, p, meldId, cardIds) {
   removeCards(h.hands[p], cardIds);
   meld.cards.push(...cards);
   meld.type = v.type;
-  recomputeBurraco(h, p);
-  match.log.push({ t: 'addmeld', player: p, meld: meldId, len: cards.length });
+  recomputeBurraco(h, t);
+  match.log.push({ t: 'addmeld', player: p, team: t, meld: meldId, len: cards.length });
   h.lastAction = { type: 'addmeld', player: p };
   afterHandChange(match, p);
   return { ok: true };
 }
 
-function recomputeBurraco(h, p) {
-  h.hasBurraco[p] = h.melds[p].some((m) => m.cards.length >= 7);
+function recomputeBurraco(h, t) {
+  h.hasBurraco[t] = h.melds[t].some((m) => m.cards.length >= 7);
 }
 
-function willHaveBurracoAfterNewMeld(h, p, v) {
+function willHaveBurracoAfterNewMeld(h, t, v) {
   if (v.length >= 7) return true;
-  return h.melds[p].some((m) => m.cards.length >= 7);
+  return h.melds[t].some((m) => m.cards.length >= 7);
 }
 
-// Called after melds change: if hand empty, take pozzetto, or close if allowed.
+// After melds change: if the player's hand is empty, take pozzetto or close.
 function afterHandChange(match, p) {
   const h = match.hand;
+  const t = teamOf(p);
   if (h.hands[p].length !== 0) return;
-  if (!h.pozzettoTaken[p]) {
-    takePozzetto(match, p);
+  if (!h.pozzettoTaken[t]) {
+    takePozzetto(match, p, t);
     return;
   }
-  // Hand emptied via melds, pozzetto already taken: close in hand (needs a burraco).
-  if (h.hasBurraco[p]) {
-    closeHand(match, p);
-  }
+  if (h.hasBurraco[t]) closeHand(match, t);
 }
 
-function takePozzetto(match, p) {
+function takePozzetto(match, p, t) {
   const h = match.hand;
-  if (h.pozzettoTaken[p]) return;
-  const poz = h.pozzetti[p];
+  if (h.pozzettoTaken[t]) return;
+  const poz = h.pozzetti[t];
   h.hands[p].push(...poz.splice(0, poz.length));
   sortHand(h.hands[p]);
-  h.pozzettoTaken[p] = true;
-  match.log.push({ t: 'pozzetto', player: p });
+  h.pozzettoTaken[t] = true;
+  match.log.push({ t: 'pozzetto', player: p, team: t });
   h.lastAction = { type: 'pozzetto', player: p };
 }
 
-// Discard one card, ending the turn. If it empties the hand and closing
-// conditions are met, the hand closes.
 export function discardCard(match, p, cardId) {
   const h = match.hand;
   const err = ensureTurn(h, p);
   if (err) return { ok: false, error: err };
   if (h.phase !== 'play') return { ok: false, error: 'Devi prima pescare.' };
-  if (h.hands[p].length === 1 && !h.pozzettoTaken[p]) {
-    // Discarding the last card would empty the hand; take pozzetto instead of ending.
-    // Player must have a card to discard; here they still have one, so allow discard
-    // only if this does not illegally close. We take pozzetto first.
-  }
+  const t = teamOf(p);
   const card = h.hands[p].find((x) => x.id === cardId);
   if (!card) return { ok: false, error: 'Carta non valida.' };
 
   const willEmpty = h.hands[p].length === 1;
 
   if (willEmpty) {
-    if (!h.pozzettoTaken[p]) {
-      // Discarding your last card empties the hand: take the pozzetto for next turn
-      // and end the current turn.
+    if (!h.pozzettoTaken[t]) {
       removeCards(h.hands[p], [cardId]);
       h.discard.unshift(card);
-      takePozzetto(match, p);
+      takePozzetto(match, p, t);
       match.log.push({ t: 'discard', player: p, card: card.id, tookPozzetto: true });
       h.lastAction = { type: 'discard', player: p, card: card.id };
       endTurn(match);
       return { ok: true, tookPozzetto: true };
     }
-    // Pozzetto already taken: can close if a burraco exists.
-    if (h.hasBurraco[p]) {
+    if (h.hasBurraco[t]) {
       removeCards(h.hands[p], [cardId]);
       h.discard.unshift(card);
-      closeHand(match, p);
+      closeHand(match, t);
       return { ok: true, closed: true };
     }
-    // No burraco yet: cannot empty hand. Disallow this discard.
     return { ok: false, error: 'Non puoi chiudere senza aver fatto almeno un burraco.' };
   }
 
-  // Normal discard.
   removeCards(h.hands[p], [cardId]);
   h.discard.unshift(card);
   match.log.push({ t: 'discard', player: p, card: card.id });
@@ -298,23 +283,20 @@ export function discardCard(match, p, cardId) {
 function endTurn(match) {
   const h = match.hand;
   h.turnCount = (h.turnCount || 0) + 1;
-  h.turn = 1 - h.turn;
+  h.turn = (h.turn + 1) % match.numPlayers;
   h.phase = 'draw';
   h.tookDiscardThisTurn = false;
-  // Safety net: extremely long stalemates end the hand as if the stock ran out.
-  if (h.turnCount > 400 && !h.over) {
-    endHandEmptyStock(match);
-  }
+  if (h.turnCount > 800 && !h.over) endHandEmptyStock(match);
 }
 
 // ---- Hand end / scoring ---------------------------------------------------
 
-function closeHand(match, p) {
+function closeHand(match, team) {
   const h = match.hand;
   h.over = true;
-  h.closedBy = p;
-  match.log.push({ t: 'close', player: p });
-  scoreHand(match, p);
+  h.closedBy = team;
+  match.log.push({ t: 'close', team });
+  scoreHand(match, team);
 }
 
 function endHandEmptyStock(match) {
@@ -326,40 +308,42 @@ function endHandEmptyStock(match) {
   return { ok: true, handOver: true };
 }
 
-export function scoreHand(match, closerP) {
+export function scoreHand(match, closerTeam) {
   const h = match.hand;
+  const n = match.numPlayers;
   const breakdown = [null, null];
-  for (let p = 0; p < 2; p++) {
+  for (let t = 0; t < NUM_TEAMS; t++) {
     let meldPoints = 0;
     let burracoBonus = 0;
     let cleanBurracos = 0;
     let dirtyBurracos = 0;
-    for (const m of h.melds[p]) {
+    for (const m of h.melds[t]) {
       meldPoints += m.cards.reduce((s, c) => s + cardValue(c), 0);
       if (m.cards.length >= 7) {
-        // A burraco is clean (200) when it contains no wild card, else dirty (100).
         const v = validateMeld(m.cards);
         const isClean = v.valid ? v.clean : !m.cards.some((c) => isJoker(c));
         if (isClean) { burracoBonus += 200; cleanBurracos++; }
         else { burracoBonus += 100; dirtyBurracos++; }
       }
     }
-    const handPenalty = h.hands[p].reduce((s, c) => s + cardValue(c), 0);
-    const pozzettoPenalty = h.pozzettoTaken[p] ? 0 : 100;
-    const closeBonus = closerP === p ? 100 : 0;
-
+    // Sum hand penalties for all players on this team.
+    let handPenalty = 0;
+    for (let p = 0; p < n; p++) {
+      if (teamOf(p) === t) handPenalty += h.hands[p].reduce((s, c) => s + cardValue(c), 0);
+    }
+    const pozzettoPenalty = h.pozzettoTaken[t] ? 0 : 100;
+    const closeBonus = closerTeam === t ? 100 : 0;
     const total = meldPoints + burracoBonus + closeBonus - handPenalty - pozzettoPenalty;
-    breakdown[p] = {
+    breakdown[t] = {
       meldPoints, burracoBonus, cleanBurracos, dirtyBurracos,
       handPenalty, pozzettoPenalty, closeBonus, total,
     };
-    match.players[p].totalScore += total;
+    match.teamScores[t] += total;
   }
   h.breakdown = breakdown;
 
-  // Check match end.
-  const s0 = match.players[0].totalScore;
-  const s1 = match.players[1].totalScore;
+  const s0 = match.teamScores[0];
+  const s1 = match.teamScores[1];
   if ((s0 >= match.targetScore || s1 >= match.targetScore) && s0 !== s1) {
     match.finished = true;
     match.winner = s0 > s1 ? 0 : 1;
@@ -370,20 +354,21 @@ export function scoreHand(match, closerP) {
 
 // ---- Views ----------------------------------------------------------------
 
-// Produce a redacted view for a specific viewer (hides opponents' hands and stock).
 export function viewFor(match, viewer) {
   const h = match.hand;
   if (!h) return { match: baseMatch(match), hand: null };
+  const n = match.numPlayers;
   return {
     match: baseMatch(match),
     hand: {
       you: viewer,
+      yourTeam: teamOf(viewer),
       turn: h.turn,
       phase: h.phase,
       over: h.over,
       closedBy: h.closedBy,
       yourHand: h.hands[viewer] || [],
-      oppHandCount: h.hands[1 - viewer] ? h.hands[1 - viewer].length : 0,
+      handCounts: Array.from({ length: n }, (_, p) => h.hands[p].length),
       stockCount: h.stock.length,
       discard: h.discard,
       melds: h.melds,
@@ -400,13 +385,14 @@ export function viewFor(match, viewer) {
 function baseMatch(match) {
   return {
     id: match.id,
+    numPlayers: match.numPlayers,
     targetScore: match.targetScore,
     handNumber: match.handNumber,
     finished: match.finished,
     winner: match.winner,
-    players: match.players.map((p) => ({ id: p.id, name: p.name, isBot: p.isBot, index: p.index, totalScore: p.totalScore })),
+    teamScores: match.teamScores.slice(),
+    players: match.players.map((p) => ({ id: p.id, name: p.name, isBot: p.isBot, index: p.index, team: p.team })),
   };
 }
 
-// Full (unredacted) engine access for bots / server-side AI.
 export function rawHand(match) { return match.hand; }
