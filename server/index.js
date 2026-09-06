@@ -93,9 +93,15 @@ function code4() {
   return c;
 }
 
-function makeRoom(type, code, size = 2) {
+function sanitizeTarget(t) {
+  const n = Number(t);
+  if (!Number.isFinite(n)) return 2005;
+  return Math.min(5000, Math.max(300, Math.round(n)));
+}
+
+function makeRoom(type, code, size = 2, target = 2005) {
   const id = 'room-' + nanoid(8);
-  const room = { id, code: code || null, type, size, match: null, seats: [], botTimer: null, started: false };
+  const room = { id, code: code || null, type, size, target, match: null, seats: [], botTimer: null, started: false };
   rooms.set(id, room);
   return room;
 }
@@ -106,7 +112,7 @@ function seatIndexOfUser(room, userId) {
 
 function startRoomMatch(room) {
   const players = room.seats.map((s) => ({ id: s.userId, name: s.name, isBot: !!s.isBot }));
-  room.match = createMatch({ players });
+  room.match = createMatch({ players, targetScore: room.target || 2005 });
   room.started = true;
   for (const seat of room.seats) if (!seat.isBot) userRoom.set(seat.userId, room.id);
   broadcastRoom(room, 'match:start');
@@ -258,19 +264,19 @@ io.on('connection', (socket) => {
     socket.emit('hello:ok', { profile: getProfile(userId, name) });
   });
 
-  socket.on('queue:join', ({ size } = {}) => {
+  socket.on('queue:join', ({ size, target } = {}) => {
     const userId = socket.data.userId;
     if (!userId) return;
     if (userRoom.has(userId)) return; // already in a game
     const sz = size === 4 ? 4 : 2;
     quickQueues[2] = quickQueues[2].filter((q) => q.userId !== userId);
     quickQueues[4] = quickQueues[4].filter((q) => q.userId !== userId);
-    quickQueues[sz].push({ userId, name: socket.data.name, socketId: socket.id });
+    quickQueues[sz].push({ userId, name: socket.data.name, socketId: socket.id, target: sanitizeTarget(target) });
     socket.emit('queue:waiting', { size: sz, waiting: quickQueues[sz].length });
 
     if (quickQueues[sz].length >= sz) {
       const picked = quickQueues[sz].splice(0, sz);
-      const room = makeRoom('quick', null, sz);
+      const room = makeRoom('quick', null, sz, picked[0].target); // use first player's chosen length
       room.seats = picked.map((q) => ({ userId: q.userId, name: q.name, socketId: q.socketId, connected: true, auto: false }));
       startRoomMatch(room);
     }
@@ -283,7 +289,7 @@ io.on('connection', (socket) => {
     socket.emit('queue:left', {});
   });
 
-  socket.on('room:create', ({ size } = {}) => {
+  socket.on('room:create', ({ size, target } = {}) => {
     const userId = socket.data.userId;
     if (!userId) return;
     if (userRoom.has(userId)) return;
@@ -291,7 +297,7 @@ io.on('connection', (socket) => {
     let code = code4();
     let guard = 0;
     while ([...rooms.values()].some((r) => r.code === code) && guard++ < 50) code = code4();
-    const room = makeRoom('private', code, sz);
+    const room = makeRoom('private', code, sz, sanitizeTarget(target));
     room.seats = [{ userId, name: socket.data.name, socketId: socket.id, connected: true, auto: false }];
     userRoom.set(userId, room.id);
     socket.emit('room:created', { roomId: room.id, code: room.code, seat: 0, size: sz, filled: 1 });

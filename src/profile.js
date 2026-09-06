@@ -8,10 +8,26 @@ function randomId() {
   return 'u-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
-const FUN_NAMES = [
-  'Assopigliatutto', 'Pinella', 'Jolly', 'Scala Reale', 'Burracone',
-  'Mazziere', 'Pozzetto', 'Tris', 'Poker', 'Mano Fortunata',
+// Random funny "first name + surname" nicknames, Burraco/luck themed.
+const FIRST_NAMES = [
+  'Mano', 'Freddy', 'Gina', 'Nando', 'Pina', 'Bruno', 'Gigi', 'Rosa',
+  'Tonino', 'Ciro', 'Lella', 'Beppe', 'Sandra', 'Mimmo', 'Rocco', 'Vale',
+  'Nino', 'Carmela', 'Peppe', 'Ivana', 'Dario', 'Ornella', 'Saro', 'Gustavo',
+  'Lady', 'Don', 'Zia', 'Zio', 'Cummenda', 'Miss',
 ];
+const SURNAMES = [
+  'Fortunato', 'Pigliatutto', 'Pinella', 'Jolly', 'Asso', 'Pozzetto',
+  'Mazziere', 'Scartini', 'Prenditutto', 'Buttalà', 'Calacarte', 'Bluff',
+  'Scala Reale', 'Burracone', 'Occhiodilince', 'Manolesta', 'Vincitore',
+  'Sbagliacarte', 'Tris', 'Poker', 'Sette Bello', 'Chiudetutto',
+  'Rubascarti', 'Contapunti', 'Matta', 'Baro Gentile',
+];
+
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+export function randomName() {
+  return `${pick(FIRST_NAMES)} ${pick(SURNAMES)}`;
+}
 
 export function loadProfile() {
   try {
@@ -23,7 +39,7 @@ export function loadProfile() {
   } catch { /* ignore */ }
   const profile = {
     userId: randomId(),
-    name: FUN_NAMES[Math.floor(Math.random() * FUN_NAMES.length)],
+    name: randomName(),
   };
   saveProfile(profile);
   return profile;
@@ -38,4 +54,37 @@ export function setName(name) {
   const p = loadProfile();
   p.name = (name || '').trim().slice(0, 20) || p.name;
   return saveProfile(p);
+}
+
+// ---- Settings (match length, etc.) ----
+const SETTINGS_KEY = 'burraco.settings';
+
+// Available match lengths (points to win). x005 keeps ties impossible-ish.
+export const TARGET_PRESETS = [
+  { value: 505, label: 'Lampo', hint: '~1-2 mani' },
+  { value: 1005, label: 'Veloce', hint: '~3-4 mani' },
+  { value: 2005, label: 'Classica', hint: 'partita piena' },
+  { value: 3005, label: 'Lunga', hint: 'per i maratoneti' },
+];
+
+export function loadSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (raw) {
+      const s = JSON.parse(raw);
+      if (typeof s.targetScore === 'number') return { targetScore: s.targetScore };
+    }
+  } catch { /* ignore */ }
+  return { targetScore: 2005 };
+}
+
+export function saveSettings(settings) {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* ignore */ }
+  return settings;
+}
+
+export function setTargetScore(value) {
+  const s = loadSettings();
+  s.targetScore = value;
+  return saveSettings(s);
 }

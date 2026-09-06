@@ -4,9 +4,10 @@
 import { io } from 'socket.io-client';
 
 export class OnlineController {
-  constructor({ profile }) {
+  constructor({ profile, targetScore = 2005 }) {
     this.mode = 'online';
     this.profile = profile;
+    this.targetScore = targetScore;
     this.listeners = new Set();
     this.state = {
       mode: 'online',
@@ -81,9 +82,9 @@ export class OnlineController {
   getState() { return this.state; }
 
   // ---- matchmaking ----
-  quickMatch(size = 2) { this.socket.emit('queue:join', { size }); this._patch({ matchmaking: 'queue', roomSize: size }); }
+  quickMatch(size = 2) { this.socket.emit('queue:join', { size, target: this.targetScore }); this._patch({ matchmaking: 'queue', roomSize: size }); }
   leaveQueue() { this.socket.emit('queue:leave'); }
-  createRoom(size = 2) { this.socket.emit('room:create', { size }); }
+  createRoom(size = 2) { this.socket.emit('room:create', { size, target: this.targetScore }); }
   joinRoom(code) { this.socket.emit('room:join', { code: (code || '').toUpperCase().trim() }); }
   startWithBots() { this.socket.emit('room:startbots'); }
   cancelRoom() { this.socket.emit('room:cancel'); }

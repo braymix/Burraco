@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { loadProfile, setName as saveName } from './profile.js';
+import { loadProfile, setName as saveName, loadSettings, setTargetScore, TARGET_PRESETS, randomName } from './profile.js';
 import { LocalController } from './game/LocalController.js';
 import { OnlineController } from './game/OnlineController.js';
 import { GameBoard } from './ui/GameBoard.jsx';
-import { RulesModal } from './ui/Rules.jsx';
+import { RulesBook } from './ui/RulesBook.jsx';
 
 export default function App() {
   const [profile, setProfile] = useState(() => loadProfile());
+  const [settings, setSettings] = useState(() => loadSettings());
   const [controller, setController] = useState(null);
   const [cstate, setCstate] = useState(null);
   const [showRules, setShowRules] = useState(false);
@@ -20,11 +21,11 @@ export default function App() {
 
   const startLocal = (numPlayers = 2) => {
     disposeController();
-    setController(new LocalController({ playerName: profile.name, numPlayers }));
+    setController(new LocalController({ playerName: profile.name, numPlayers, targetScore: settings.targetScore }));
   };
   const startOnline = () => {
     disposeController();
-    setController(new OnlineController({ profile }));
+    setController(new OnlineController({ profile, targetScore: settings.targetScore }));
   };
   const disposeController = () => {
     if (controller) { try { controller.dispose(); } catch { /* ignore */ } }
@@ -44,24 +45,26 @@ export default function App() {
       {screen === 'menu' && (
         <Menu
           profile={profile}
+          settings={settings}
           onName={(name) => setProfile(saveName(name))}
+          onTarget={(v) => setSettings(setTargetScore(v))}
           onLocal={startLocal}
           onOnline={startOnline}
           onRules={() => setShowRules(true)}
         />
       )}
       {screen === 'lobby' && (
-        <OnlineLobby controller={controller} state={cstate} onBack={exitGame} />
+        <OnlineLobby controller={controller} state={cstate} settings={settings} onBack={exitGame} />
       )}
       {screen === 'game' && cstate && (
         <GameBoard controller={controller} state={cstate} onExit={exitGame} />
       )}
-      {showRules && <RulesModal onClose={() => setShowRules(false)} />}
+      {showRules && <RulesBook onClose={() => setShowRules(false)} />}
     </div>
   );
 }
 
-function Menu({ profile, onName, onLocal, onOnline, onRules }) {
+function Menu({ profile, settings, onName, onTarget, onLocal, onOnline, onRules }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(profile.name);
   return (
@@ -90,14 +93,32 @@ function Menu({ profile, onName, onLocal, onOnline, onRules }) {
         ) : (
           <div className="name-view">
             <span>Ciao, <b>{profile.name}</b></span>
-            <button className="btn btn-ghost btn-small" onClick={() => { setDraft(profile.name); setEditing(true); }}>
-              cambia nome
-            </button>
+            <div className="name-actions">
+              <button className="btn btn-ghost btn-small" title="Nome casuale" onClick={() => onName(randomName())}>🎲</button>
+              <button className="btn btn-ghost btn-small" onClick={() => { setDraft(profile.name); setEditing(true); }}>
+                cambia
+              </button>
+            </div>
           </div>
         )}
       </div>
 
       <div className="menu-actions">
+        <div className="mode-group">
+          <div className="mode-label">🏁 Durata partita <span className="mode-sub">punti per vincere</span></div>
+          <div className="target-picker">
+            {TARGET_PRESETS.map((t) => (
+              <button
+                key={t.value}
+                className={`target-opt ${settings.targetScore === t.value ? 'on' : ''}`}
+                onClick={() => onTarget(t.value)}
+              >
+                <span className="t-label">{t.label}</span>
+                <span className="t-value">{t.value}</span>
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="mode-group">
           <div className="mode-label">🤖 Contro il Bot</div>
           <div className="mode-buttons">
@@ -106,7 +127,7 @@ function Menu({ profile, onName, onLocal, onOnline, onRules }) {
           </div>
         </div>
         <button className="btn btn-big" onClick={onOnline}>🌐 Gioca Online</button>
-        <button className="btn btn-big btn-ghost" onClick={onRules}>📖 Come si gioca</button>
+        <button className="btn btn-big btn-ghost" onClick={onRules}>📖 Regole del Burraco</button>
       </div>
 
       <MenuFooter />
